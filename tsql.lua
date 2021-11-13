@@ -9,7 +9,7 @@ local from_info = {
     ufes = {
         options = { pop_id=1, interface_id=1, location=1 },
         selectors = { time=1 },
-        t_measures = { pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
+        t_measures = { counter=1, ['*']=1 },
         s_measures = { pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
 
     }
@@ -37,7 +37,7 @@ local SELECT = 10
 local WHERE = 11
 local GROUP_BY = 12
 local OUTPUT = 13
-local FROM = 14
+local USE = 14
 local BOUNDS = 17
 local AND = 15
 local COMMA = 16
@@ -61,7 +61,10 @@ local DO=3
 --
 local function err_unk_measures(ident)
     local s = ""
-    for k, v in pairs(current_from.measures) do
+    for k, v in pairs(current_from.t_measures) do
+        s = s .. k .. " "
+    end
+    for k, v in pairs(current_from.s_measures) do
         s = s .. k .. " "
     end
     error("Unknown measure: "..ident..". Valid measures are: { " .. s .. " }")
@@ -73,6 +76,22 @@ end
 --
 --
 local function err_unk_where_field(ident)
+    local s = ""
+    for k, v in pairs(current_from.options) do
+        s = s .. k .. " "
+    end
+    for k, v in pairs(current_from.selectors) do
+        s = s .. k .. " "
+    end
+    error("Unknown where-field: "..ident..". Valid values are: { " .. s .. " }")
+end
+
+-------------------------------------
+--
+--
+--
+--
+local function err_unk_bounds_field(ident)
     local s = ""
     for k, v in pairs(current_from.options) do
         s = s .. k .. " "
@@ -97,7 +116,15 @@ local function do_select (q, tokens, pos, n)
         t = tokens[pos]
         if t[CD] ~= LITERAL then error("Literal expected") end
         local ident = t[TT]
-        if not current_from.measures[ident] then err_unk_measures(ident) end
+        if current_from.s_measures[ident] then
+            q.select=1
+            q.sel_s_m = 1
+        elseif current_from.t_measures[ident] then
+            q.select=1
+            q.sel_t_m = 1
+        else
+            err_unk_measures(ident) 
+        end
         local s = '"' .. ident .. '"'
         table.insert(q.jstab, s)
         if pos == n then pos = nil; break end
@@ -116,12 +143,13 @@ end
 --
 --
 --
-local function do_from (q, tokens, pos, n)
+local function do_use (q, tokens, pos, n)
     table.insert(q.jstab, '"from":')
     local t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
     local ident = t[TT]
     if not from_info[ident] then error ('Unknown from: ' .. ident) end
+
     local s = ' "' .. ident .. '"'
     table.insert(q.jstab, s)
     table.insert(q.jstab, ', ')
@@ -140,7 +168,18 @@ local function do_bounds(q, tokens, pos, n)
 
     local t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
-    local s = ' "' .. t[TT] .. '"'
+
+    local ident = t[TT]
+    if current_from.selectors[ident] then
+        q.bounds_S = 1
+    elseif current_from.options[ident] then
+        q.bounds_O = 1
+    else
+        err_unk_bounds_field(ident)
+    end
+    q.bounds=1
+
+    local s = ' "' .. ident .. '"'
     table.insert(q.jstab, s)
 
     table.insert(q.jstab, ', ')
@@ -163,13 +202,12 @@ local function do_where_clause(q, tokens, pos, n)
     -- ident
     t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
+    
     ident = t[TT]
-
-    local v = current_from.options[ident]
-    if v then
-        q.option = true
+    if current_from.options[ident] then
+        q.where_O = true
     elseif current_from.selectors[ident] then
-        q.terminal = true
+        q.where_S = true
     else
         err_unk_where_field(ident)
     end
@@ -178,15 +216,16 @@ local function do_where_clause(q, tokens, pos, n)
     if pos == n then error("Incomplete where clause: missing where field") end
     pos = pos + 1
 
-    -- function
+    -- op-filter
     t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
-    s = ', "' .. t[TT] .. '"'
+    ident = t[TT]
+    s = ', "' .. ident .. '"'
     table.insert(q.jstab, s)
     if pos == n then error("Incomplete where clause: missing where function") end
     pos = pos + 1
 
-    -- arguments
+    -- filter-arguments
     local n_args = 0
     local found_and = false
 
@@ -203,21 +242,21 @@ local function do_where_clause(q, tokens, pos, n)
         table.insert(q.jstab, s)
         n_args = n_args + 1
 
-        if pos == n then
-            pos = nil
-            break
-        end
-        pos = pos + 1
+        if pos == n then pos = nil; break end
+        pos = pos + 1       -- consumes literal
 
         t = tokens[pos]
+
+        -- and keyword?
         if t[CD] == AND then
             found_and = true
-            pos = pos + 1
-            break
+            pos = pos + 1    -- consumes AND
+            break            -- stop this clause 
         end
         
+        -- not "," ? stop!
         if t[CD] ~= COMMA then break end
-        pos = pos + 1
+        pos = pos + 1        -- consumes ","
     end            
     
     table.insert(q.jstab, ']')
@@ -259,14 +298,28 @@ local function do_group_by(q, tokens, pos, n)
         t = tokens[pos]
         if t[CD] ~= LITERAL then error("Literal expected") end
 
-        local s = ' "' .. t[TT] .. '"'
+        local ident = t[TT]
+        if current_from.selectors[ident] then
+            if q.group_by and q.group_by ~= 'S' then  error("Mixing types of group by") end
+            if q.where_S then  error("A where clause using a selector cannot coexist with a group by over a selector") end
+            q.group_by = 'S'
+        elseif current_from.options[ident] then
+            if q.group_by and q.group_by ~= 'O' then  error("Mixing types of group by") end
+            if q.where_O then  error("A where clause using an option cannot coexist with a group by over an option") end
+            q.group_by = 'O'
+        else
+            err_unk_bounds_field(ident)
+        end
+    
+        local s = ' "' .. ident .. '"'
         table.insert(q.jstab, s)
         if pos == n then pos=nil; break end
         pos = pos + 1
 
-
         t = tokens[pos]
         if t[CD] ~= 16 then break end
+        pos = pos + 1
+
         table.insert(q.jstab, ', ')
     end
 
@@ -324,7 +377,7 @@ local map = {
     ["group"]  =    { GROUP_BY, do_group_by_2 },
     ["by"]    =     { BY, nil },
     output    =     { OUTPUT, do_output },
-    from      =     { FROM, do_from },
+    use       =     { USE, do_use },
     ["and"]       = { AND, nil },
     [","]         = { COMMA, nil },
     bounds    =     { BOUNDS, do_bounds }
@@ -428,7 +481,7 @@ local function compile_tsql_query(parts, pos)
     while true do
         local t = parts[pos]
         local do_fun = t[DO] 
-        if not do_fun then error() end
+        if not do_fun then error("Unknown clause: '" .. t[TT.."'"]) end
         pos = pos + 1
         pos = do_fun(q, parts, pos, n)
         if not pos or pos == n then break end
@@ -461,7 +514,7 @@ end
 -- Test
 --
 --------------------------------------------------------
-local str = 'from ufes select rtt_ns_avg where time between "10", "20" and location zrect -12.13,12.1,121, 33 group by z; bounds time'
+local str = 'use ufes select rtt_ns_avg where time between "10", "20" and location zrect -12.13,12.1,121, 33 group by time, location; bounds time'
 print(str)
 
 local status, json_str = pcall(compile_tsql, str)
