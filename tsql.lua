@@ -20,13 +20,12 @@ local current_from = from_info.ufes
 local function str_to_epoch(str)
 end
 
-
 local funs = {
-    eq      = { 1, nil },
-    zrect   = { 5, 5 },
-    zpoly   = { 7, nil },
-    between = { 2, 2, str_to_epoch },
-    range   = { 2, 2, str_to_epoch },
+    eq      = { min_a=1, max_a=nil },
+    zrect   = { min_a=5, max_a=5 },
+    zpoly   = { min_a=7, max_a=nil },
+    between = { min_a=2, max_a=2, str_f=str_to_epoch },
+    range   = { min_a=2, max_a=2, str_f=str_to_epoch },
 }
 
 ---------------------------------------------------------------
@@ -117,14 +116,14 @@ local function do_select (q, tokens, pos, n)
         if t[CD] ~= LITERAL then error("Literal expected") end
         local ident = t[TT]
         if current_from.s_measures[ident] then
-            q.select=1
             q.sel_s_m = 1
         elseif current_from.t_measures[ident] then
-            q.select=1
             q.sel_t_m = 1
         else
             err_unk_measures(ident) 
         end
+        if q.bounds then error("query cannot use 'bounds' and 'select'") end
+        q.select=1
         local s = '"' .. ident .. '"'
         table.insert(q.jstab, s)
         if pos == n then pos = nil; break end
@@ -177,6 +176,7 @@ local function do_bounds(q, tokens, pos, n)
     else
         err_unk_bounds_field(ident)
     end
+    if q.select then error("query cannot use 'bounds' and 'select'.") end
     q.bounds=1
 
     local s = ' "' .. ident .. '"'
@@ -301,11 +301,11 @@ local function do_group_by(q, tokens, pos, n)
         local ident = t[TT]
         if current_from.selectors[ident] then
             if q.group_by and q.group_by ~= 'S' then  error("Mixing types of group by") end
-            if q.where_S then  error("A where clause using a selector cannot coexist with a group by over a selector") end
+            --if q.where_S then  error("A where clause using a selector cannot coexist with a group by over a selector") end
             q.group_by = 'S'
         elseif current_from.options[ident] then
             if q.group_by and q.group_by ~= 'O' then  error("Mixing types of group by") end
-            if q.where_O then  error("A where clause using an option cannot coexist with a group by over an option") end
+            --if q.where_O then  error("A where clause using an option cannot coexist with a group by over an option") end
             q.group_by = 'O'
         else
             err_unk_bounds_field(ident)
@@ -514,7 +514,7 @@ end
 -- Test
 --
 --------------------------------------------------------
-local str = 'use ufes select rtt_ns_avg where time between "10", "20" and location zrect -12.13,12.1,121, 33 group by time, location; bounds time'
+local str = 'use ufes select rtt_ns_avg where time between "10", "20" and location zrect -12.13,12.1,121, 33 group by pop_id, location; bounds time'
 print(str)
 
 local status, json_str = pcall(compile_tsql, str)
