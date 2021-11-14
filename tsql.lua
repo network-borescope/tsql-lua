@@ -8,31 +8,46 @@ local from_info = {
         options = { pop_id=1, interface_id=1, location=1 },
         selectors = { time=1 },
         t_measures = { counter=1, ['*']=1 },
-        s_measures = { pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
+        s_measures = { counter=1, ['*']=1, pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
 
     }
 }
 
 local current_from = from_info.ufes
 
-local function str_to_epoch(str)
+local function str_to_epoch(s)
+    local year, month, day, hour, min, sec
+    if not s:find(" ") then
+        -- date only
+        year, month, day = s:match("(%d+)-(%d+)-(%d+)");  hour, min, sec = 0, 0, 0
+    else
+        -- date time
+        year, month, day, hour, min, sec = s:match("(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)")
+    end
+    if (not year) or (not month) or (not day) then error("Invalid date: "..s) end
+    local offset = os.time() - os.time(os.date("!*t"))
+    local tm = os.time({day=day,month=month,year=year,hour=hour,min=min,sec=sec}) + offset
+    -- print(s, tm, os.date("!%c",tm))
+    return tm
 end
 
+local PMIN, PMAX, PMAP = 1, 2, 3
+
 local funs = {
-    eq      = { min_a=1, max_a=nil },
-    zrect   = { min_a=5, max_a=5 },
-    zpoly   = { min_a=7, max_a=nil },
-    between = { min_a=2, max_a=2, str_f=str_to_epoch },
-    range   = { min_a=2, max_a=2, str_f=str_to_epoch },
+    eq      = { [PMIN]=1 },
+    zrect   = { [PMIN]=5, [PMAX]=5 },
+    zpoly   = { [PMIN]=7 },
+    between = { [PMIN]=2, [PMAX]=2, [PMAP]=str_to_epoch },
+    range   = { [PMIN]=2, [PMAX]=2, [PMAP]=str_to_epoch },
 }
 
 local group_by_kws = {
-    by = { 1,  },
-    get = { 3,  },
-    length = { min_a=1, max_a=1 },
-    bin = { 1 },
-    start_time = { 1 },
-    end_time = {},
+    by         = { [PMIN]=1 },
+    get        = { [PMIN]=3 },
+    length     = { [PMIN]=1, [PMAX]=1 },
+    binsize    = { [PMIN]=1, [PMAX]=1 },
+    start_time = { [PMIN]=1 },
+    end_time   = { [PMAX]=1 },
 }
 
 -----------------------------------------------------------------
@@ -59,7 +74,7 @@ local group_by_kws = {
 -----------------------------------------------------------------
 --[[
     valid combinations using schema:
-    schema
+    get schema
 
     valid combinations using bounds:
 
@@ -304,8 +319,10 @@ local function do_where_clause(q, tokens, pos, n)
     -- op-filter
     t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
-    ident = t[TT]
-    s = ', "' .. ident .. '"'
+    local filter_name = t[TT]
+    local filter_info = funs[filter_name]
+    if not filter_info then error("Unknown option filter: ".. filter_name) end
+    s = ', "' .. filter_name .. '"'
     table.insert(q.jstab, s)
     if pos == n then error("Incomplete where clause: missing where function") end
     pos = pos + 1
@@ -316,14 +333,16 @@ local function do_where_clause(q, tokens, pos, n)
 
     while true do
         t = tokens[pos]
-        local v = t[CD]
-        if v == STRING then
-            -- deveria mapear strings para literais
-            v = LITERAL
+        local cd = t[CD]
+        local v = t[TT]
+        if cd == STRING then
+            local f = filter_info[PMAP]
+            if f then v = tostring(f(v)) end
+            cd = LITERAL
         end
 
-        if v ~= LITERAL then error("Incomplete where clause: missing a literal value") end
-        s = ', ' .. t[TT]
+        if cd ~= LITERAL then error("Incomplete where clause: missing a literal value") end
+        s = ', ' .. v
         table.insert(q.jstab, s)
         n_args = n_args + 1
 
@@ -667,7 +686,7 @@ local str = [[
     use ufes 
     select rtt_ns_avg 
     # comment
-    where time between "10", "20" and location zrect -12.13,12.1,121, 33 
+    where time between "2020-10-01", "2020-10-02" and location zrect -12.13,12.1,121, 33 
     group by pop_id, location
         get avg, min
         length 500;
