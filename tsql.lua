@@ -698,7 +698,8 @@ local str = [[
     use ufes 
     select rtt_ns_avg 
     # comment
-    where time between "2020-10-01", "2020-10-02" and location zrect -12.13,12.1,121, 33 
+    where time between "2020-10-01", "2020-10-02" 
+          and location zrect -12.13, 12.1, 121, 33 
     group by pop_id, location
         get avg, min
         length 500;
