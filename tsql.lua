@@ -9,13 +9,22 @@ local from_info = {
         selectors = { time=1 },
         t_measures = { counter=1, ['*']=1 },
         s_measures = { counter=1, ['*']=1, pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
-
     }
 }
 
 local current_from = from_info.ufes
 
-local function str_to_epoch(s)
+-----------------------------------------------------------------
+--                 Filter Mappings
+-----------------------------------------------------------------
+
+
+-------------------------------------
+--
+--
+--
+--
+local function map_to_epoch(s)
     local year, month, day, hour, min, sec
     if not s:find(" ") then
         -- date only
@@ -31,14 +40,17 @@ local function str_to_epoch(s)
     return tm
 end
 
+
+------------------------------------------------------------------
+
 local PMIN, PMAX, PMAP = 1, 2, 3
 
-local funs = {
+local option_filters = {
     eq      = { [PMIN]=1 },
     zrect   = { [PMIN]=5, [PMAX]=5 },
     zpoly   = { [PMIN]=7 },
-    between = { [PMIN]=2, [PMAX]=2, [PMAP]=str_to_epoch },
-    range   = { [PMIN]=2, [PMAX]=2, [PMAP]=str_to_epoch },
+    between = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch },
+    range   = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch },
 }
 
 local group_by_kws = {
@@ -320,7 +332,7 @@ local function do_where_clause(q, tokens, pos, n)
     t = tokens[pos]
     if t[CD] ~= LITERAL then error("Literal expected") end
     local filter_name = t[TT]
-    local filter_info = funs[filter_name]
+    local filter_info = option_filters[filter_name]
     if not filter_info then error("Unknown option filter: ".. filter_name) end
     s = ', "' .. filter_name .. '"'
     table.insert(q.jstab, s)
