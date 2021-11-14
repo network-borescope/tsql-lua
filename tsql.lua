@@ -3,8 +3,6 @@
 --
 --------------------------------------------------------
 
-
-
 local from_info = {
     ufes = {
         options = { pop_id=1, interface_id=1, location=1 },
@@ -28,7 +26,91 @@ local funs = {
     range   = { min_a=2, max_a=2, str_f=str_to_epoch },
 }
 
----------------------------------------------------------------
+local group_by_kws = {
+    by = { 1,  },
+    get = { 3,  },
+    length = { min_a=1, max_a=1 },
+    bin = { 1 },
+    start_time = { 1 },
+    end_time = {},
+}
+
+-----------------------------------------------------------------
+--                 Exemplos
+-----------------------------------------------------------------
+--[[
+
+    use ufes
+    select ttt_ns_avg
+    where pop_id = 10 
+       and time range "2021-01-01", "2021-02-01"
+    group by time
+          get avg, min, max
+          length 1000
+          bin 2000    # seconds
+          start-time ""
+          end-time   ""
+
+]]--
+
+
+-----------------------------------------------------------------
+--                 Types of Queries
+-----------------------------------------------------------------
+--[[
+    valid combinations using schema:
+    schema
+
+    valid combinations using bounds:
+
+    bounds <option>
+    bounds <option> where <option>
+    bounds <option> where <selector>
+    bounds <option> where <options> and <selector>
+
+    bounds <selector>
+    bounds <selector> where <option>
+    bounds <selector> where <selector>
+    bounds <selector> where <options> and <selector>
+
+    valid combinations using select <t-measure>:
+
+    select <t-measure>
+
+    select <t-measure> where <option-filters>
+    select <t-measure> group by <option>
+    select <t-measure> where <option-filters> group by <option>
+
+    select <t-measure> where <selector-filter>
+    select <t-measure> group by <option>
+    select <t-measure> where <selector-filter>  group by <option>
+
+    select <t-measure> where <option-filters> and <selector-filter>
+    select <t-measure> where <option-filters> and <selector-filter> group by <option>
+
+
+    valid combinations using select <s-measure>:
+
+    select <s-measure> where <option-filters>
+    select <s-measure> where <selector-filter>
+    select <s-measure> where <option-filters> and <selector-filter>
+
+    select <s-measure> group by <selector>
+
+    select <s-measure> where <option-filters> group by <selector>
+    select <s-measure> where <selector-filter> group by <selector>
+    select <s-measure> where <option-filters> and <selector-filter> group by <selector>
+
+    NOT valid combinations using select <s-measure>:
+
+    select <s-measure> group by <option> (???)
+    select <s-measure> where <option-filters> group by <option>
+    select <s-measure> where <selector-filter> group by <option>
+    select <s-measure> where <option-filters> and <selector-filter> group by <option>
+
+
+]]---------------------------------------------------------------
+
 local LITERAL = 1
 local STRING = 2
 
@@ -40,7 +122,6 @@ local USE = 14
 local BOUNDS = 17
 local AND = 15
 local COMMA = 16
-local GROUP = 18
 local BY = 19
 
 ---------------------------------------------------------------
@@ -145,7 +226,7 @@ end
 local function do_use (q, tokens, pos, n)
     table.insert(q.jstab, '"from":')
     local t = tokens[pos]
-    if t[CD] ~= LITERAL then error("Literal expected") end
+    if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
     local ident = t[TT]
     if not from_info[ident] then error ('Unknown from: ' .. ident) end
 
@@ -163,6 +244,10 @@ end
 --
 --
 local function do_bounds(q, tokens, pos, n)
+    if q.schema then error("You cannot use 'bounds' clause with 'schema' clause") end
+    if q.select then error("You cannot use 'bounds' clause with 'select' clause") end
+    if q.bounds then error("You cannot use 'bounds' clause more than once") end
+
     table.insert(q.jstab, '"bounds":')
 
     local t = tokens[pos]
@@ -201,7 +286,7 @@ local function do_where_clause(q, tokens, pos, n)
 
     -- ident
     t = tokens[pos]
-    if t[CD] ~= LITERAL then error("Literal expected") end
+    if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
     
     ident = t[TT]
     if current_from.options[ident] then
@@ -237,7 +322,7 @@ local function do_where_clause(q, tokens, pos, n)
             v = LITERAL
         end
 
-        if v ~= LITERAL then error("Incomplete where clause: missing value") end
+        if v ~= LITERAL then error("Incomplete where clause: missing a literal value") end
         s = ', ' .. t[TT]
         table.insert(q.jstab, s)
         n_args = n_args + 1
@@ -270,6 +355,10 @@ end
 --
 --
 local function do_where(q, tokens, pos, n)
+    if q.schema then error("You cannot use 'where' clause with 'schema' clause") end
+    if q.where then error("You cannot use 'where' clause more than once") end
+    if not q.select and not q.bound then error("'where' clause requires previous either 'select' or 'bounds' clause") end
+
     table.insert(q.jstab, '"where": [')
 
     while true do 
@@ -292,19 +381,24 @@ end
 --
 --
 local function do_group_by(q, tokens, pos, n)
-    table.insert(q.jstab, '"group by": [')
+
+    if q.bounds then error("You cannot use 'group by' clause with 'bound' clause") end
+    if q.schema then error("You cannot use 'group by' clause with 'schema' clause") end
+    if q.group_by then error("You cannot use 'group-by' clause more than once") end
+    if not q.select then error("'group by' clause requires a previous 'select' clause") end
+
     local t
     while true do
         t = tokens[pos]
-        if t[CD] ~= LITERAL then error("Literal expected") end
+        if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
 
         local ident = t[TT]
         if current_from.selectors[ident] then
-            if q.group_by and q.group_by ~= 'S' then  error("Mixing types of group by") end
+            if q.group_by and q.group_by ~= 'S' then  error("Mixing different kinds of sources in 'group by'") end
             --if q.where_S then  error("A where clause using a selector cannot coexist with a group by over a selector") end
             q.group_by = 'S'
         elseif current_from.options[ident] then
-            if q.group_by and q.group_by ~= 'O' then  error("Mixing types of group by") end
+            if q.group_by and q.group_by ~= 'O' then  error("Mixing different kinds of sources in 'group by'") end
             --if q.where_O then  error("A where clause using an option cannot coexist with a group by over an option") end
             q.group_by = 'O'
         else
@@ -317,26 +411,86 @@ local function do_group_by(q, tokens, pos, n)
         pos = pos + 1
 
         t = tokens[pos]
-        if t[CD] ~= 16 then break end
+        if t[CD] ~= COMMA then break end
         pos = pos + 1
 
         table.insert(q.jstab, ', ')
     end
 
-    table.insert(q.jstab, '], ')
-
     return pos
 end
 
--------------------------------------
+    -------------------------------------
+--
+--
+--
+--
+local function parse_list(tokens, pos, n)
+    -- filter-arguments
+    local n_args = 0
+    local found_and = false
+    local args = {}
+
+    while true do
+        t = tokens[pos]
+        local v = t[CD]
+        if v == STRING then
+            -- deveria mapear strings para literais
+            v = LITERAL
+        end
+
+        if v ~= LITERAL then error("Incomplete list: missing literal value.  Found:"..t[TT]) end
+        table.insert(args, t[TT])
+        n_args = n_args + 1
+
+        if pos == n then pos = nil; break end
+        pos = pos + 1       -- consumes literal
+
+        t = tokens[pos]
+        -- not "," ? stop!
+        if t[CD] ~= COMMA then break end
+        pos = pos + 1        -- consumes ","
+    end
+    return pos, args
+end
+
+    -------------------------------------
 --
 --
 --
 --
 local function do_group_by_2(q, tokens, pos, n)
-    local t = tokens[pos]
+    local t 
+    t = tokens[pos]
     if t[CD] ~= BY then error("'by' expected") end
-    return do_group_by(q, tokens, pos+1, n)
+
+    table.insert(q.jstab, '"group by": [')
+    pos = do_group_by(q, tokens, pos+1, n)
+
+    if pos then
+        local args = {}
+        while true do
+            t = tokens[pos]
+            if t[CD] ~= LITERAL then break end
+            local ident = t[TT]
+            local kw =  group_by_kws[ident]
+            if not kw then error("Invalid group additional-clause. Found: "..ident) end
+
+            pos, args[kw] = parse_list(tokens, pos+1, n)
+            if not pos then break end
+        end
+
+        if #args > 0 then 
+            if args.length then
+            elseif args.binsize then
+            else
+                error("When using group projection you must specify either the 'length' or the 'binsize'. ")
+            end
+        end
+    end
+    table.insert(q.jstab, '], ')
+
+    return pos
 end
 
 -------------------------------------
@@ -396,7 +550,7 @@ local map = {
 --
 function string:split(sep)
    local sep, fields = sep or " ", {}
-   local pattern = string.format("([^%s]+)", sep)
+   local pattern = string.format("([^%s\n]+)", sep)
    self:gsub(pattern, function(c) fields[#fields+1] = c end)
    return fields
 end
@@ -409,52 +563,45 @@ end
 local function tokenize(str)
     local sqls = {}
     local toks = {}
-    local first, last = 0, 0
+    local first = 0
     local p
 
     while true do
-        p, last = str:find('[",;]', first+1)
-        local finish = not p
-        p = p or 0
-        local plain = str:sub(first+1, p-1)
+        p = str:find('[",;#]', first+1)
 
-        local fields = plain:split(' ')
-        for _, f in ipairs(fields) do
-            table.insert(toks, { 0, f } )
-        end
-        if finish then break end
+        local plain = str:sub(first+1, (p or 0) - 1)
+        plain:gsub("([^ \n]+)", 
+            function(c)
+                local m, v, f = map[c], LITERAL, nil
+                if m then v = m[1]; f = m[2] end
+                table.insert(toks, { v, c, f } )
+            end)
+        if not p then break end
 
         local c = str:sub(p,p)
-        if c == ';' then
+        if c == ',' then 
+            table.insert(toks, { COMMA, ',', nil } )
+        elseif c == ';' then
             table.insert(sqls, toks)
             toks = {}
-        elseif c == ',' then 
-            table.insert(toks, { COMMA, ',' } )
-        else 
-            local s0 = p
-            p, last = str:find('"', s0+1)
+        elseif c == '#' then
+            local p0 = p
+            p = str:find('\n', p0+1)
+            if not p then break end
+        else
+            local p0 = p
+            p = str:find('"', p0+1)
             if not p then error("Unterminated string") end
-            local sql_str = str:sub(s0,p)
-            table.insert(toks, { STRING, sql_str } )
+            table.insert(toks, { STRING, str:sub(p0,p) } )
         end
         first = p
     end
     table.insert(sqls, toks)
-
-    for _, toks in ipairs(sqls) do
-        for i, t in ipairs(toks) do
-            if t[CD] ~= LITERAL and t[CD] ~= STRING then
-                local tok = t[TT]
-                local m = map[tok]
-                if not m then 
-                    t[CD] = LITERAL
-                else
-                    t[CD] = m[1]
-                    t[DO] = m[2]
-                end
-            end
+    --[[ for k, v in ipairs(sqls) do 
+        for k2, t in ipairs(v) do
+            print(k2,t[TT])
         end
-    end
+    end]]--
     return sqls
 end
 
@@ -481,15 +628,17 @@ local function compile_tsql_query(parts, pos)
     while true do
         local t = parts[pos]
         local do_fun = t[DO] 
-        if not do_fun then error("Unknown clause: '" .. t[TT.."'"]) end
+        if not do_fun then error("Unknown clause: '" .. t[TT] .. "'") end
         pos = pos + 1
         pos = do_fun(q, parts, pos, n)
         if not pos or pos == n then break end
     end
+
     table.insert(q.jstab, ' "end": 1}')
 
     print("no errors")
     return table.concat(q.jstab, "")
+
 end
 
 -------------------------------------
@@ -514,7 +663,16 @@ end
 -- Test
 --
 --------------------------------------------------------
-local str = 'use ufes select rtt_ns_avg where time between "10", "20" and location zrect -12.13,12.1,121, 33 group by pop_id, location; bounds time'
+local str = [[
+    use ufes 
+    select rtt_ns_avg 
+    # comment
+    where time between "10", "20" and location zrect -12.13,12.1,121, 33 
+    group by pop_id, location
+        get avg, min
+        length 500;
+    bounds time
+]]
 print(str)
 
 local status, json_str = pcall(compile_tsql, str)
