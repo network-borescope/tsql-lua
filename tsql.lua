@@ -3,12 +3,19 @@
 --
 --------------------------------------------------------
 
+local uefs_cat_pop = {
+    map_cat   = { AC = 1, AM=2, AP=3, BA=4 },
+    from_num = false,
+}
+
 local from_info = {
     ufes = {
-        options = { pop_id=1, interface_id=1, location=1 },
-        selectors = { time=1 },
-        t_measures = { counter=1, ['*']=1 },
-        s_measures = { counter=1, ['*']=1, pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
+        items = {
+            options = { pop_id = {map_cat = { AC=1, AM=2, AP=3, BA=4 } }, interface_id=1, location=1 },
+            selectors = { time=1 },
+            t_measures = { counter=1, ['*']=1 },
+            s_measures = { counter=1, ['*']=1, pkt_loss_norm_avg=1, rtt_ns_avg=1, download_kbps_avg=1, upload_kbps_avg=1 },
+        }
     }
 }
 
@@ -44,6 +51,7 @@ end
 ------------------------------------------------------------------
 
 local PMIN, PMAX, PMAP = 1, 2, 3
+
 
 local option_filters = {
     eq      = { [PMIN]=1 },
@@ -168,10 +176,10 @@ local DO=3
 --
 local function err_unk_measures(ident)
     local s = ""
-    for k, v in pairs(current_from.t_measures) do
+    for k, v in pairs(current_from.items.t_measures) do
         s = s .. k .. " "
     end
-    for k, v in pairs(current_from.s_measures) do
+    for k, v in pairs(current_from.items.s_measures) do
         s = s .. k .. " "
     end
     error("Unknown measure: "..ident..". Valid measures are: { " .. s .. " }")
@@ -184,10 +192,10 @@ end
 --
 local function err_unk_where_field(ident)
     local s = ""
-    for k, v in pairs(current_from.options) do
+    for k, v in pairs(current_from.items.options) do
         s = s .. k .. " "
     end
-    for k, v in pairs(current_from.selectors) do
+    for k, v in pairs(current_from.items.selectors) do
         s = s .. k .. " "
     end
     error("Unknown where-field: "..ident..". Valid values are: { " .. s .. " }")
@@ -200,10 +208,10 @@ end
 --
 local function err_unk_bounds_field(ident)
     local s = ""
-    for k, v in pairs(current_from.options) do
+    for k, v in pairs(current_from.items.options) do
         s = s .. k .. " "
     end
-    for k, v in pairs(current_from.selectors) do
+    for k, v in pairs(current_from.items.selectors) do
         s = s .. k .. " "
     end
     error("Unknown where-field: "..ident..". Valid values are: { " .. s .. " }")
@@ -223,9 +231,9 @@ local function do_select (q, tokens, pos, n)
         t = tokens[pos]
         if t[CD] ~= LITERAL then error("Literal expected") end
         local ident = t[TT]
-        if current_from.s_measures[ident] then
+        if current_from.items.s_measures[ident] then
             q.sel_s_m = 1
-        elseif current_from.t_measures[ident] then
+        elseif current_from.items.t_measures[ident] then
             q.sel_t_m = 1
         else
             err_unk_measures(ident) 
@@ -281,9 +289,9 @@ local function do_bounds(q, tokens, pos, n)
     if t[CD] ~= LITERAL then error("Literal expected") end
 
     local ident = t[TT]
-    if current_from.selectors[ident] then
+    if current_from.items.selectors[ident] then
         q.bounds_S = 1
-    elseif current_from.options[ident] then
+    elseif current_from.items.options[ident] then
         q.bounds_O = 1
     else
         err_unk_bounds_field(ident)
@@ -316,9 +324,12 @@ local function do_where_clause(q, tokens, pos, n)
     if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
     
     ident = t[TT]
-    if current_from.options[ident] then
+    local map_cat
+    local ident_option = current_from.items.options[ident]
+    if ident_option then
+        map_cat = type(ident_option) == "table"
         q.where_O = true
-    elseif current_from.selectors[ident] then
+    elseif current_from.items.selectors[ident] then
         q.where_S = true
     else
         err_unk_where_field(ident)
@@ -345,11 +356,16 @@ local function do_where_clause(q, tokens, pos, n)
 
     while true do
         t = tokens[pos]
-        local cd = t[CD]
         local v = t[TT]
+        local cd = t[CD]
         if cd == STRING then
             local f = filter_info[PMAP]
-            if f then v = tostring(f(v)) end
+            if type(f) == "function" then
+                v = tostring(f(v))
+            elseif map_cat then
+                local unquoted = v:sub(2,#v-1)
+                v = ident_option.map_cat[unquoted] or v
+            end
             cd = LITERAL
         end
 
@@ -424,11 +440,11 @@ local function do_group_by(q, tokens, pos, n)
         if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
 
         local ident = t[TT]
-        if current_from.selectors[ident] then
+        if current_from.items.selectors[ident] then
             if q.group_by and q.group_by ~= 'S' then  error("Mixing different kinds of sources in 'group by'") end
             --if q.where_S then  error("A where clause using a selector cannot coexist with a group by over a selector") end
             q.group_by = 'S'
-        elseif current_from.options[ident] then
+        elseif current_from.items.options[ident] then
             if q.group_by and q.group_by ~= 'O' then  error("Mixing different kinds of sources in 'group by'") end
             --if q.where_O then  error("A where clause using an option cannot coexist with a group by over an option") end
             q.group_by = 'O'
@@ -699,7 +715,8 @@ local str = [[
     select rtt_ns_avg 
     # comment
     where time between "2020-10-01", "2020-10-02" 
-          and location zrect -12.13, 12.1, 121, 33 
+          and location zrect -12.13, 12.1, 121, 33
+          and pop_id eq "AC"
     group by pop_id, location
         get avg, min
         length 500;
