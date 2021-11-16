@@ -3,11 +3,6 @@
 --
 --------------------------------------------------------
 
-local uefs_cat_pop = {
-    map_cat   = { AC = 1, AM=2, AP=3, BA=4 },
-    from_num = false,
-}
-
 local from_info = {
     ufes = {
         items = {
@@ -324,6 +319,9 @@ local function do_where_clause(q, tokens, pos, n)
     if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
     
     ident = t[TT]
+    if q.select_fields[ident] then error('Trying to create a second filter using the same field: '..ident) end
+    q.select_fields[ident] = true
+
     local map_cat
     local ident_option = current_from.items.options[ident]
     if ident_option then
@@ -358,7 +356,15 @@ local function do_where_clause(q, tokens, pos, n)
         t = tokens[pos]
         local v = t[TT]
         local cd = t[CD]
-        if cd == STRING then
+        if cd == LITERAL then
+            if not tonumber(v) then
+                print(ident, ident_option, v)
+                if not (ident_option and type(ident_option) == "table") then error("There is no map rule for '"..ident.."' to map ".. v) end
+                local new = ident_option.map_cat[v] 
+                if not new then error("Could not map ["..v.."] for ident '"..ident.."'") end
+                v = new
+            end
+        elseif cd == STRING then
             local f = filter_info[PMAP]
             if type(f) == "function" then
                 v = tostring(f(v))
@@ -366,10 +372,9 @@ local function do_where_clause(q, tokens, pos, n)
                 local unquoted = v:sub(2,#v-1)
                 v = ident_option.map_cat[unquoted] or v
             end
-            cd = LITERAL
+        else
+            error("Incomplete where clause: missing a literal value") 
         end
-
-        if cd ~= LITERAL then error("Incomplete where clause: missing a literal value") end
         s = ', ' .. v
         table.insert(q.jstab, s)
         n_args = n_args + 1
@@ -405,6 +410,8 @@ local function do_where(q, tokens, pos, n)
     if q.schema then error("You cannot use 'where' clause with 'schema' clause") end
     if q.where then error("You cannot use 'where' clause more than once") end
     if not q.select and not q.bound then error("'where' clause requires previous either 'select' or 'bounds' clause") end
+
+    q.select_fields = {}
 
     table.insert(q.jstab, '"where": [')
 
@@ -629,8 +636,10 @@ local function tokenize(str)
         if c == ',' then 
             table.insert(toks, { COMMA, ',', nil } )
         elseif c == ';' then
-            table.insert(sqls, toks)
-            toks = {}
+            if #toks > 0 then -- ignores sequences of ';'
+                table.insert(sqls, toks)
+                toks = {}
+            end
         elseif c == '#' then
             local p0 = p
             p = str:find('\n', p0+1)
@@ -716,10 +725,16 @@ local str = [[
     # comment
     where time between "2020-10-01", "2020-10-02" 
           and location zrect -12.13, 12.1, 121, 33
-          and pop_id eq "AC"
+          and pop_id eq AC
+          and pop_id eq BA
+          and interface_id eq 1
     group by pop_id, location
         get avg, min
         length 500;
+        ; ; 
+        # test to accept empty statements
+        ;  ;
+    use ufes        
     bounds time
 ]]
 print(str)
@@ -728,4 +743,3 @@ local status, json_str = pcall(compile_tsql, str)
 if not status then
     print("err:", json_str)
 end
-
