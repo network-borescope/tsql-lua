@@ -3,6 +3,12 @@
 --
 --------------------------------------------------------
 
+---------------------------------------------------------
+-- Todo:
+--    Check the valid of the structure 
+--------------------------------------------------------
+
+
 local from_info = {
     ufes = {
         items = {
@@ -652,7 +658,9 @@ local function tokenize(str)
         end
         first = p
     end
-    table.insert(sqls, toks)
+    if #toks == 0 then 
+        table.insert(sqls, toks)
+    end
     --[[ for k, v in ipairs(sqls) do 
         for k2, t in ipairs(v) do
             print(k2,t[TT])
@@ -726,7 +734,6 @@ local str = [[
     where time between "2020-10-01", "2020-10-02" 
           and location zrect -12.13, 12.1, 121, 33
           and pop_id eq AC
-          and pop_id eq BA
           and interface_id eq 1
     group by pop_id, location
         get avg, min
