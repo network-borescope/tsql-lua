@@ -658,7 +658,7 @@ local function tokenize(str)
         end
         first = p
     end
-    if #toks == 0 then 
+    if #toks ~= 0 then 
         table.insert(sqls, toks)
     end
     --[[ for k, v in ipairs(sqls) do 
@@ -713,6 +713,7 @@ end
 local function compile_tsql(str)
     local pos = 1
     local sqls = tokenize(str)
+    if #sqls == 0 then error("Request without queries") end
     for _, parts in ipairs(sqls) do
         print ("-----------------------")
         local jsonstr = compile_tsql_query(parts, pos)
@@ -742,9 +743,21 @@ local str = [[
         # test to accept empty statements
         ;  ;
     use ufes        
-    bounds time
+    bounds time;
 ]]
+
+local str_empty = [[
+    ;;
+    # teste
+    ;
+
+    ;
+]] 
+
+-- str = str_empty
+
 print(str)
+
 
 local status, json_str = pcall(compile_tsql, str)
 if not status then
