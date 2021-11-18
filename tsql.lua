@@ -366,7 +366,7 @@ local function do_where_clause(q, tokens, pos, n)
         local cd = t[CD]
         if cd == LITERAL then
             if not tonumber(v) then
-                print(ident, ident_option, v)
+                -- print(ident, ident_option, v)
                 if not (ident_option and type(ident_option) == "table") then error("There is no map rule for '"..ident.."' to map ".. v) end
                 local new = ident_option.map_cat[v] 
                 if not new then error("Could not map ["..v.."] for ident '"..ident.."'") end
@@ -707,7 +707,7 @@ local function compile_tsql_query(parts, pos)
 
     table.insert(q.jstab, ' "end": 1}')
 
-    print("no errors")
+    -- print("no errors")
     return table.concat(q.jstab, "")
 
 end
@@ -722,9 +722,9 @@ local function compile_tsql(str)
     local sqls = tokenize(str)
     if #sqls == 0 then error("Request without queries") end
     for _, parts in ipairs(sqls) do
-        print ("-----------------------")
+        --print ("-----------------------")
         local jsonstr = compile_tsql_query(parts, pos)
-        print (jsonstr)
+        --print (jsonstr)
     end
     return true
 end    
@@ -735,7 +735,26 @@ end
 -- Test
 --
 --------------------------------------------------------
-local str = [[
+local str0 = [[
+    ;;
+    # teste
+    ;
+
+    ;
+]] 
+
+local str1 = [[
+    use ufes 
+    select rtt_ns_avg 
+    # comment
+    where time between "2020-10-01", "2020-10-02" 
+          and location zrect 5, -12.13, 12.1, 121, 33
+          and pop_id eq AC
+          and interface_id eq 1
+    group by pop_id
+]]
+
+local str2 = [[
     use ufes 
     select rtt_ns_avg 
     # comment
@@ -753,20 +772,20 @@ local str = [[
     bounds time;
 ]]
 
-local str_empty = [[
-    ;;
-    # teste
-    ;
-
-    ;
-]] 
-
--- str = str_empty
+local str = str1
 
 print(str)
 
-
-local status, json_str = pcall(compile_tsql, str)
-if not status then
-    print("err:", json_str)
+--local skt = require "socket"
+--local ms = skt.gettime()*1000
+local tm = os.time()
+for i = 1, 1000*1000 do
+    local status, json_str = pcall(compile_tsql, str)
+    if not status then
+        print("err:", json_str)
+        break
+    end
 end
+print(os.time() - tm)
+--print(skt.gettime()*1000 - ms)
+
