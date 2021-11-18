@@ -219,6 +219,30 @@ local function err_unk_bounds_field(ident)
 end
 
 
+-------------------------------------
+--
+--
+--
+--
+local function do_use (q, tokens, pos, n)
+    if q.use then error("Using 'use' twice in a single query") end
+    table.insert(q.jstab, '"from":')
+    local t = tokens[pos]
+    if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
+    local ident = t[TT]
+    if not from_info[ident] then error ('Unknown from: ' .. ident) end
+
+    local s = ' "' .. ident .. '"'
+    table.insert(q.jstab, s)
+    table.insert(q.jstab, ', ')
+
+    q.common.use = true
+    q.use = true
+
+    if pos == n then return nil end
+    return pos + 1
+end
+
 
 -------------------------------------
 --
@@ -226,6 +250,13 @@ end
 --
 --
 local function do_select (q, tokens, pos, n)
+    if not q.common.use then error("You must have selected a tinycubes with 'use'") end
+    if q.schema then error("You cannot use 'select' clause with 'schema' clause") end
+    if q.bound then error("You cannot use 'select' clause with 'bounds' clause") end
+    if q.select then error("You cannot use 'select' clause twice on a query") end
+    q.select = true
+    q.someQuery = true
+
     table.insert(q.jstab, '"select": [')
     local t
     while true do
@@ -251,6 +282,7 @@ local function do_select (q, tokens, pos, n)
         table.insert(q.jstab, ', ')
     end            
     table.insert(q.jstab, '], ')
+
     return pos
 end
     
@@ -259,30 +291,12 @@ end
 --
 --
 --
-local function do_use (q, tokens, pos, n)
-    table.insert(q.jstab, '"from":')
-    local t = tokens[pos]
-    if t[CD] ~= LITERAL then error("Literal expected but found: " .. t[TT]) end
-    local ident = t[TT]
-    if not from_info[ident] then error ('Unknown from: ' .. ident) end
-
-    local s = ' "' .. ident .. '"'
-    table.insert(q.jstab, s)
-    table.insert(q.jstab, ', ')
-
-    if pos == n then return nil end
-    return pos + 1
-end
-
--------------------------------------
---
---
---
---
 local function do_bounds(q, tokens, pos, n)
+    if not q.common.use then error("You must have selected a tinycubes with 'use'") end
     if q.schema then error("You cannot use 'bounds' clause with 'schema' clause") end
     if q.select then error("You cannot use 'bounds' clause with 'select' clause") end
     if q.bounds then error("You cannot use 'bounds' clause more than once") end
+    q.someQuery = true
 
     table.insert(q.jstab, '"bounds":')
 
@@ -350,6 +364,8 @@ local function do_where_clause(q, tokens, pos, n)
     local filter_info = option_filters[filter_name]
     local min_args = filter_info[PMIN]
     local max_args = filter_info[PMAX]
+    local head_fmt = filter_info[PHEAD]
+    local tail_fmt = filter_info[PTAIL]
     if not filter_info then error("Unknown option filter: ".. filter_name) end
     s = ', "' .. filter_name .. '"'
     table.insert(q.jstab, s)
@@ -364,6 +380,7 @@ local function do_where_clause(q, tokens, pos, n)
         t = tokens[pos]
         local v = t[TT]
         local cd = t[CD]
+
         if cd == LITERAL then
             if not tonumber(v) then
                 -- print(ident, ident_option, v)
@@ -371,7 +388,7 @@ local function do_where_clause(q, tokens, pos, n)
                 local new = ident_option.map_cat[v] 
                 if not new then error("Could not map ["..v.."] for ident '"..ident.."'") end
                 v = new
-            end
+            end        
         elseif cd == STRING then
             local f = filter_info[PMAP]
             if type(f) == "function" then
@@ -387,6 +404,9 @@ local function do_where_clause(q, tokens, pos, n)
         n_args = n_args + 1
         if max_args and n_args > max_args then error(string.format("Too many filter arguments for function '%s'. Max: %d Found %d ", filter_name, max_args, n_args)) end
 
+        local fmt = string.sub(head_fmt, n_args, n_args) or string.sub(tail_fmt, 1, 1)
+        if fmt == 'i' and string.find(v, '%.') then error("Invalid float point parameter '"..v.."' at argument"..n_args.." of '"..ident.."'") end
+        
         s = ', ' .. v
         table.insert(q.jstab, s)
 
@@ -421,9 +441,10 @@ end
 --
 --
 local function do_where(q, tokens, pos, n)
-    if q.schema then error("You cannot use 'where' clause with 'schema' clause") end
-    if q.where then error("You cannot use 'where' clause more than once") end
     if not q.select and not q.bound then error("'where' clause requires previous either 'select' or 'bounds' clause") end
+    if q.schema then error("You cannot use 'where' clause with 'schema' clause") end
+    if q.where then error("You cannot use 'where' clause twice in the same query") end
+    -- if not q.common.use then error("You must have selected a tinycubes with 'use'") end
 
     q.select_fields = {}
 
@@ -449,11 +470,11 @@ end
 --
 --
 local function do_group_by(q, tokens, pos, n)
-
+    if not q.select then error("'group by' clause requires a previous 'select' clause") end
     if q.bounds then error("You cannot use 'group by' clause with 'bound' clause") end
     if q.schema then error("You cannot use 'group by' clause with 'schema' clause") end
     if q.group_by then error("You cannot use 'group-by' clause more than once") end
-    if not q.select then error("'group by' clause requires a previous 'select' clause") end
+    if not q.common.use then error("You must have selected a tinycubes with 'use'") end
 
     local t
     while true do
@@ -499,7 +520,7 @@ local function parse_list(tokens, pos, n)
     local args = {}
 
     while true do
-        t = tokens[pos]
+        local t = tokens[pos]
         local v = t[CD]
         if v == STRING then
             -- deveria mapear strings para literais
@@ -637,7 +658,7 @@ local function tokenize(str)
         p = str:find('[",;#]', first+1)
 
         local plain = str:sub(first+1, (p or 0) - 1)
-        plain:gsub("([^ \n]+)", 
+        plain:gsub("([^ \r\n]+)", 
             function(c)
                 local m, v, f = map[c], LITERAL, nil
                 if m then v = m[1]; f = m[2] end
@@ -693,8 +714,8 @@ end
 --
 --
 --
-local function compile_tsql_query(parts, pos)
-    local q = { jstab = { "{" } }
+local function compile_tsql_query(common, parts, pos)
+    local q = { common = common, jstab = { "{" } }
     local n = #parts
     while true do
         local t = parts[pos]
@@ -707,8 +728,9 @@ local function compile_tsql_query(parts, pos)
 
     table.insert(q.jstab, ' "end": 1}')
 
+
     -- print("no errors")
-    return table.concat(q.jstab, "")
+    return table.concat(q.jstab, ""), q.someQuery
 
 end
 
@@ -721,9 +743,10 @@ local function compile_tsql(str)
     local pos = 1
     local sqls = tokenize(str)
     if #sqls == 0 then error("Request without queries") end
+    local common = {}
     for _, parts in ipairs(sqls) do
         --print ("-----------------------")
-        local jsonstr = compile_tsql_query(parts, pos)
+        local jsonstr, someQuery = compile_tsql_query(common, parts, pos)
         --print (jsonstr)
     end
     return true
@@ -741,7 +764,7 @@ local str0 = [[
     ;
 
     ;
-]] 
+]]
 
 local str1 = [[
     use ufes 
@@ -768,7 +791,6 @@ local str2 = [[
         ; ; 
         # test to accept empty statements
         ;  ;
-    use ufes        
     bounds time;
 ]]
 
@@ -779,7 +801,7 @@ print(str)
 --local skt = require "socket"
 --local ms = skt.gettime()*1000
 local tm = os.time()
-for i = 1, 1000*1000 do
+for i = 1, 10*1000 do
     local status, json_str = pcall(compile_tsql, str)
     if not status then
         print("err:", json_str)
@@ -788,4 +810,3 @@ for i = 1, 1000*1000 do
 end
 print(os.time() - tm)
 --print(skt.gettime()*1000 - ms)
-
