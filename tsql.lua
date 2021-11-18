@@ -51,15 +51,15 @@ end
 
 ------------------------------------------------------------------
 
-local PMIN, PMAX, PMAP = 1, 2, 3
+local PMIN, PMAX, PMAP, PHEAD, PTAIL = 1, 2, 3, 4, 5
 
 
 local option_filters = {
-    eq      = { [PMIN]=1 },
-    zrect   = { [PMIN]=5, [PMAX]=5 },
-    zpoly   = { [PMIN]=7 },
-    between = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch },
-    range   = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch },
+    eq      = { [PMIN]=1, [PHEAD]="i", [PTAIL]="i" },
+    zrect   = { [PMIN]=5, [PMAX]=5, [PHEAD]="iffff" },
+    zpoly   = { [PMIN]=7, [PHEAD]="i", [PTAIL]="f" },
+    between = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch, [PHEAD]="ii" },
+    range   = { [PMIN]=2, [PMAX]=2, [PMAP]=map_to_epoch, [PHEAD]="ii" },
 }
 
 local group_by_kws = {
@@ -348,6 +348,8 @@ local function do_where_clause(q, tokens, pos, n)
     if t[CD] ~= LITERAL then error("Literal expected") end
     local filter_name = t[TT]
     local filter_info = option_filters[filter_name]
+    local min_args = filter_info[PMIN]
+    local max_args = filter_info[PMAX]
     if not filter_info then error("Unknown option filter: ".. filter_name) end
     s = ', "' .. filter_name .. '"'
     table.insert(q.jstab, s)
@@ -381,9 +383,13 @@ local function do_where_clause(q, tokens, pos, n)
         else
             error("Incomplete where clause: missing a literal value") 
         end
+
+        n_args = n_args + 1
+        if max_args and n_args > max_args then error(string.format("Too many filter arguments for function '%s'. Max: %d Found %d ", filter_name, max_args, n_args)) end
+
         s = ', ' .. v
         table.insert(q.jstab, s)
-        n_args = n_args + 1
+
 
         if pos == n then pos = nil; break end
         pos = pos + 1       -- consumes literal
@@ -402,6 +408,8 @@ local function do_where_clause(q, tokens, pos, n)
         pos = pos + 1        -- consumes ","
     end            
     
+    if min_args and n_args < min_args then error(string.format("Too few filter arguments for function '%s'. Min: %d Found %d ", filter_name, min_args, n_args)) end
+
     table.insert(q.jstab, ']')
     return pos, found_and
     
@@ -488,7 +496,6 @@ end
 local function parse_list(tokens, pos, n)
     -- filter-arguments
     local n_args = 0
-    local found_and = false
     local args = {}
 
     while true do
@@ -733,7 +740,7 @@ local str = [[
     select rtt_ns_avg 
     # comment
     where time between "2020-10-01", "2020-10-02" 
-          and location zrect -12.13, 12.1, 121, 33
+          and location zrect 5, -12.13, 12.1, 121, 33
           and pop_id eq AC
           and interface_id eq 1
     group by pop_id, location
