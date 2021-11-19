@@ -714,7 +714,7 @@ end
 --
 --
 --
-local function compile_tsql_query(common, parts, pos)
+local function compile_tsql_query(sqls, common, parts, pos)
     local q = { common = common, jstab = { "{" } }
     local n = #parts
     while true do
@@ -728,10 +728,12 @@ local function compile_tsql_query(common, parts, pos)
 
     table.insert(q.jstab, ' "end": 1}')
 
-
-    -- print("no errors")
-    return table.concat(q.jstab, ""), q.someQuery
-
+    if q.someQuery then
+        -- print("no errors")
+        local s = table.concat(q.jstab, "")
+        table.insert(sqls, s)
+    end
+    
 end
 
 -------------------------------------
@@ -739,19 +741,28 @@ end
 --
 --
 --
-local function compile_tsql(str)
+local function jsError(err)
+    return string.format('{ "tp":0, "id":0, "err": "%s"}', err)
+end
+
+-------------------------------------
+--
+--
+--
+--
+local function compile_tsql(str, jsons)
     local pos = 1
     local sqls = tokenize(str)
-    if #sqls == 0 then error("Request without queries") end
+    if #sqls == 0 then 
+        table.insert(jsons,jsError("Request without queries"))
+        return
+    end
     local common = {}
     for _, parts in ipairs(sqls) do
-        --print ("-----------------------")
-        local jsonstr, someQuery = compile_tsql_query(common, parts, pos)
-        --print (jsonstr)
+        local ok, err = pcall(compile_tsql_query, jsons, common, parts, pos)
+        if not ok then table.insert(jsons, jsError(err)) end
     end
-    return true
 end    
-
 
 ---------------------------------------------------------
 --
@@ -802,10 +813,15 @@ print(str)
 --local ms = skt.gettime()*1000
 local tm = os.time()
 for i = 1, 10*1000 do
-    local status, json_str = pcall(compile_tsql, str)
+    local jsons = {}
+    local status, json_str = pcall(compile_tsql, str, jsons)
     if not status then
         print("err:", json_str)
         break
+    else
+        for k,js in pairs(jsons) do
+            print(js)
+        end
     end
 end
 print(os.time() - tm)
