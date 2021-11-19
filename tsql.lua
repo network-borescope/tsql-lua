@@ -760,7 +760,7 @@ local function compile_tsql(str, jsons)
     local common = {}
     for _, parts in ipairs(sqls) do
         local ok, err = pcall(compile_tsql_query, jsons, common, parts, pos)
-        if not ok then table.insert(jsons, jsError(err)) end
+        if not ok then table.insert(jsons, { jsError(err) } ) end
     end
 end    
 
@@ -820,7 +820,7 @@ for i = 1, 10*1000 do
         break
     else
         for k,js in pairs(jsons) do
-            print(js)
+            if type(js) == "string" then print(js) end
         end
     end
 end
