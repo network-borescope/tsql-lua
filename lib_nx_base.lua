@@ -8,16 +8,20 @@ local _m = {}
 --
 ------------------------------------------------------------------------------ 
 
+--[[
 local default_url = "http://127.0.0.1:9001/tc/query"
 
 local from_to_url = {
     
-    rnp_ttls = "http://127.0.0.1:9001/tc/query",
+    rnp_ttls = "http://127.0.0.1:9001/tc/quer",
     rnp_serv = "http://127.0.0.1:9002/tc/query",
     rnp_dns = "http://127.0.0.1:9003/tc/query",
 
     perfsonar = "http://127.0.0.1:9105/tc/query",
 }
+--]]
+
+
 
 -------------------------------------
 --
@@ -60,10 +64,13 @@ function _m.post_request(url, body, options)
     --
     if not res then
         ngx.log(ngx.ERR,"failed to request: "..err) 
-        ngx.say("failed to request: ", err)
+        -- ngx.say("failed to request: ", err)
+		error(err)
         return
-    end 
-    
+	elseif res.body:sub(1,1) ~= "{" then
+		error(res.body)
+	end 
+   
     return res
 end
 
@@ -75,21 +82,23 @@ end
 ------------------------------------------------------------------------------ 
 local cjson = require "cjson"
 
+
+
 -------------------------------------
 --
 --
 --
 --
-function _m.body_request(body_str)
+local function body_request(body_str, url)
 
     -- convert request body to json
     local body_json = cjson.decode(body_str) or ""
 
     -- map url
-    local url = _m.map_from_to_url(body_json.from)
+    --url = url or _m.map_from_to_url(body_json.from)
+	url = url or nil
 	
-	ngx.log(ngx.ERR,"++++++++++++++++++" .. url .. "+++++++")
-	
+	-- ngx.log(ngx.ERR,"++++++++++++++++++" .. url .. "+++++++")
 
     -- fix 'group by' array call
     local group_by = body_json["group-by"]
@@ -99,7 +108,9 @@ function _m.body_request(body_str)
     local origin = "*" -- h["Origin"] 
     -- ngx.header["Access-Control-Allow-Origin"] = origin
     
+	--ngx.log(ngx.ERR,"++++++++++++++++++" .. url .. "+++++++")
     local res_table = _m.post_request(url, body_str)
+	--ngx.log(ngx.ERR,"++++++++++++++++++" .. tostring(res_table.body) .. "+++++++")
     
     return res_table.body
 --[[
@@ -117,6 +128,16 @@ function _m.body_request(body_str)
 --]]
 end
 
+-------------------------------------
+--
+--
+--
+--
+function _m.body_request(body_str, url)
+	local ok, res = pcall(body_request, body_str, url)
+	if ok then return res end
+	return string.format('{ "tp":0, "id":%d, "err": "%s"}', 0, res)
+end
 
 -------------------------------------
 --
